@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"flag"
 	"fmt"
+	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"log"
 	"net/http"
@@ -18,7 +18,10 @@ type config struct {
 	port int
 	env  string
 	db   struct {
-		dsn string
+		dsn          string
+		maxOpenConns int
+		maxIdleConns int
+		maxIdleTime  string
 	}
 }
 type application struct {
@@ -31,21 +34,27 @@ func main() {
 
 	flag.IntVar(&cfg.port, "port", 4000, "API server port")
 	flag.StringVar(&cfg.env, "env", "development", "Environment (development|staging|production)")
-	flag.StringVar(&cfg.db.dsn, "db-dsn", "postgres://greenlight:123456@localhost/greenlight", "PostgreSQL DSN")
-	//flag.StringVar(&cfg.db.dsn, "db-dsn", os.Getenv("GREENLIGHT_DB_DSN"), "PostgreSQL DSN")
+	//flag.StringVar(&cfg.db.dsn, "db-dsn", "postgres://greenlight:123456@localhost/greenlight?sslmode=disable", "PostgreSQL DSN")
+	flag.StringVar(&cfg.db.dsn, "db-dsn", os.Getenv("GREENLIGHT_DB_DSN"), "PostgreSQL DSN")
+	flag.IntVar(&cfg.db.maxOpenConns, "db-max-open-conns", 25, "PostgreSQL max open connections")
+	flag.IntVar(&cfg.db.maxIdleConns, "db-max-idle-conns", 25, "PostgreSQL max idle connections")
+	flag.StringVar(&cfg.db.maxIdleTime, "db-max-idle-time", "15m", "PostgreSQL max connection idle time")
 
 	flag.Parse()
 	logger := log.New(os.Stdout, "", log.Ldate|log.Ltime)
 
-	db, err := openDB(cfg)
+	pool, err := pgxpool.New(context.Background(), cfg.db.dsn)
 	if err != nil {
-		logger.Fatal(err)
+		log.Fatalf("Unable to connection to database: %v\n", err)
 	}
-	defer db.Close()
+	defer pool.Close()
+
+	log.Println("Connected!")
 
 	app := &application{
 		config: cfg,
 		logger: logger,
+		//data.NewModels(pool),
 	}
 	srv := &http.Server{
 		Addr:         fmt.Sprintf("localhost:%d", cfg.port),
@@ -58,22 +67,3 @@ func main() {
 	err = srv.ListenAndServe()
 	logger.Fatal(err)
 }
-func openDB(cfg config) (*sql.DB, error) {
-	db, err := sql.Open("pgx", cfg.db.dsn)
-	if err != nil {
-		return nil, err
-	}
-	//create context with timeout of 5 seconds
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	err = db.PingContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-	// Return the sql.DB connection pool.
-	return db, nil
-
-}
-
-//For russian fonts
-//psql \! chcp 1251
